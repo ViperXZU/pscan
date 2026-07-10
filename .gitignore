@@ -41,3 +41,11 @@ example
 # generated native folders
 /ios
 /android
+
+# build outputs (por si se generan fuera de /android o /ios)
+*.apk
+*.aab
+*.ipa
+
+# logs de build locales
+*.log
