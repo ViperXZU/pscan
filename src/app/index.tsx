@@ -1,29 +1,43 @@
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
+import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/primary-button';
+import { normalizePhoto } from '@/lib/normalizeImage';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
+  const [picking, setPicking] = useState(false);
 
   const pickFromGallery = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 1,
-    });
-    if (result.canceled) return;
-    const asset = result.assets[0];
-    if (!asset?.uri) return;
-    router.push({
-      pathname: '/measure',
-      params: {
-        uri: asset.uri,
-        imgW: String(asset.width ?? 0),
-        imgH: String(asset.height ?? 0),
-      },
-    });
+    if (picking) return;
+    setPicking(true);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset?.uri) return;
+      // Normalizar EXIF aquí también: las fotos de galería lo traen igual.
+      let photo = { uri: asset.uri, width: asset.width ?? 0, height: asset.height ?? 0 };
+      try {
+        photo = await normalizePhoto(asset.uri);
+      } catch {}
+      router.push({
+        pathname: '/measure',
+        params: {
+          uri: photo.uri,
+          imgW: String(photo.width),
+          imgH: String(photo.height),
+        },
+      });
+    } finally {
+      setPicking(false);
+    }
   };
 
   return (
@@ -39,7 +53,12 @@ export default function HomeScreen() {
       </View>
       <View className="gap-3 px-8 pb-8">
         <PrimaryButton title="Tomar foto" onPress={() => router.push('/camera')} />
-        <PrimaryButton title="Elegir de galería" variant="secondary" onPress={pickFromGallery} />
+        <PrimaryButton
+          title={picking ? 'Abriendo…' : 'Elegir de galería'}
+          variant="secondary"
+          onPress={pickFromGallery}
+          disabled={picking}
+        />
         <Text className="mt-2 text-center text-xs text-neutral-400">
           100 % sin conexión · el cálculo se hace en tu teléfono
         </Text>

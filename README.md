@@ -2,7 +2,7 @@
 
 App móvil (React Native + **Expo SDK 57**) que calcula la **pendiente / inclinación** de un
 objeto a partir de una foto. Tomas una foto o eliges una de la galería, marcas puntos sobre el
-borde del objeto y obtienes el ángulo en grados, porcentaje, número (m) y proporción. Con varios
+borde del objeto y obtienes el ángulo en grados, la pendiente m y la proporción. Con varios
 puntos, el trazo se convierte en una **función** (por tramos o una curva ajustada, estilo GeoGebra).
 
 - **100 % offline.** Todo el cálculo es trigonometría y álgebra en el propio teléfono. No hay
@@ -31,9 +31,11 @@ puntos, el trazo se convierte en una **función** (por tramos o una curva ajusta
 
 ## Qué hace
 
-- **Cámara integrada** con **indicador de nivel** (acelerómetro) para tomar la foto derecha.
-- **Selección desde la galería.**
-- **Medición manual:** marca 2 puntos → ángulo (°), pendiente (%), número (m) y proporción (1:N).
+- **Cámara integrada** con **indicador de nivel** (acelerómetro) y **cruz guía** centrada (ejes
+  de plano cartesiano) para apuntar derecho.
+- **Selección desde la galería** (las fotos se normalizan: rotación EXIF aplicada físicamente).
+- **Medición manual:** marca 2 puntos → ángulo (°), pendiente m y proporción (1:N). **Zoom** con
+  pellizco de 2 dedos para afinar la posición de puntos y líneas.
 - **Polilínea:** marca varios puntos → varios tramos, cada uno con su pendiente; juntos forman una
   **función lineal por tramos** `y = m·x + b`.
 - **Curvas:** con 3+ puntos ajusta por mínimos cuadrados la mejor **recta, parábola o cúbica**
@@ -93,9 +95,11 @@ mano. Para usarla, compila el APK (Android) o un dev/EAS build.
 2. **Medición:**
    - Toca para **añadir puntos** sobre el borde del objeto.
    - **Arrastra** un punto para ajustarlo · **Deshacer** / **Limpiar**.
+   - **Pellizca con 2 dedos** para hacer zoom (botón 1× para volver); un dedo sigue siendo para
+     los puntos.
    - Con 2+ puntos aparece **"Ajustar a la curva (auto)"**: imanta el trazo al borde real (OpenCV).
 3. **Resultados:**
-   - **1 tramo** → ángulo, pendiente %, número (m) y proporción.
+   - **1 tramo** → ángulo, pendiente m y proporción.
    - **Varios tramos** → mini-gráfico de la función, **curva ajustada** (`y = a·x²+…`) con R²,
      ecuaciones por tramo y pendiente de cada tramo.
    - Desplegable **"¿Qué significa cada número?"** con la explicación de cada cifra.

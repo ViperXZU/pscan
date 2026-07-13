@@ -30,7 +30,12 @@ export default function MeasureScreen() {
         onDone={(points) =>
           router.push({
             pathname: '/results',
-            params: { points: JSON.stringify(points), uri },
+            params: {
+              points: JSON.stringify(points),
+              uri,
+              imgW: imgW ?? '',
+              imgH: imgH ?? '',
+            },
           })
         }
       />

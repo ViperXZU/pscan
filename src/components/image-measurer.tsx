@@ -2,6 +2,14 @@ import { Image } from 'expo-image';
 import { useMemo, useRef, useState } from 'react';
 import type { GestureResponderEvent, LayoutChangeEvent } from 'react-native';
 import { Alert, Pressable, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import {
   AutoDetectUnavailableError,
@@ -20,6 +28,8 @@ import { SlopeOverlay } from './slope-overlay';
 const GRAB_RADIUS_PT = 28;
 /** Movimiento máximo (pt) para que un gesto siga contando como toque simple. */
 const TAP_SLOP_PT = 8;
+/** Zoom máximo de la foto (pellizco con 2 dedos). */
+const MAX_ZOOM = 5;
 
 type Props = {
   uri: string;
@@ -46,6 +56,85 @@ export function ImageMeasurer({ uri, initialImgW, initialImgH, onDone }: Props) 
   const dragIndex = useRef<number | null>(null);
   const grantPos = useRef<Point | null>(null);
   const movedBeyondSlop = useRef(false);
+
+  // --- Zoom por pellizco (2 dedos) + desplazamiento (2 dedos) ---------------
+  // Un dedo sigue reservado para colocar/arrastrar puntos. Las coordenadas de
+  // los toques (locationX/Y) son locales a la vista transformada, así que el
+  // mapeo toque→píxel de imagen sigue siendo válido con cualquier zoom.
+  const zoomScale = useSharedValue(1);
+  const savedZoom = useSharedValue(1);
+  const panX = useSharedValue(0);
+  const panY = useSharedValue(0);
+  const savedPanX = useSharedValue(0);
+  const savedPanY = useSharedValue(0);
+  const [isZoomed, setIsZoomed] = useState(false);
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      const next = Math.min(Math.max(savedZoom.value * e.scale, 1), MAX_ZOOM);
+      zoomScale.value = next;
+      if (box) {
+        const maxX = (box.w * (next - 1)) / 2;
+        const maxY = (box.h * (next - 1)) / 2;
+        panX.value = Math.min(Math.max(panX.value, -maxX), maxX);
+        panY.value = Math.min(Math.max(panY.value, -maxY), maxY);
+      }
+    })
+    .onEnd(() => {
+      savedZoom.value = zoomScale.value;
+      savedPanX.value = panX.value;
+      savedPanY.value = panY.value;
+      if (zoomScale.value <= 1.02) {
+        zoomScale.value = withTiming(1);
+        panX.value = withTiming(0);
+        panY.value = withTiming(0);
+        savedZoom.value = 1;
+        savedPanX.value = 0;
+        savedPanY.value = 0;
+      }
+    });
+
+  const panGesture = Gesture.Pan()
+    .minPointers(2)
+    .maxPointers(2)
+    .onUpdate((e) => {
+      if (!box) return;
+      const maxX = (box.w * (zoomScale.value - 1)) / 2;
+      const maxY = (box.h * (zoomScale.value - 1)) / 2;
+      panX.value = Math.min(Math.max(savedPanX.value + e.translationX, -maxX), maxX);
+      panY.value = Math.min(Math.max(savedPanY.value + e.translationY, -maxY), maxY);
+    })
+    .onEnd(() => {
+      savedPanX.value = panX.value;
+      savedPanY.value = panY.value;
+    });
+
+  const zoomGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
+  useAnimatedReaction(
+    () => zoomScale.value > 1.02,
+    (zoomed, prev) => {
+      if (zoomed !== prev) runOnJS(setIsZoomed)(zoomed);
+    },
+  );
+
+  const zoomStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: panX.value },
+      { translateY: panY.value },
+      { scale: zoomScale.value },
+    ],
+  }));
+
+  const resetZoom = () => {
+    zoomScale.value = withTiming(1);
+    panX.value = withTiming(0);
+    panY.value = withTiming(0);
+    savedZoom.value = 1;
+    savedPanX.value = 0;
+    savedPanY.value = 0;
+  };
+  // --------------------------------------------------------------------------
 
   const transform = useMemo(
     () =>
@@ -186,7 +275,7 @@ export function ImageMeasurer({ uri, initialImgW, initialImgH, onDone }: Props) 
 
   const hint =
     points.length === 0
-      ? 'Toca el primer punto sobre el borde del objeto'
+      ? 'Toca el primer punto sobre el borde · pellizca con 2 dedos para hacer zoom'
       : points.length === 1
         ? 'Toca el siguiente punto para cerrar el primer tramo'
         : dense
@@ -215,39 +304,51 @@ export function ImageMeasurer({ uri, initialImgW, initialImgH, onDone }: Props) 
         </View>
       </View>
 
-      <View className="flex-1 overflow-hidden rounded-2xl bg-neutral-950" onLayout={onBoxLayout}>
-        <Image
-          source={{ uri }}
-          style={{ flex: 1 }}
-          contentFit="contain"
-          onLoad={(e) => {
-            const { width, height } = e.source;
-            if (width > 0 && height > 0) {
-              setImgSize((prev) =>
-                prev && prev.w === width && prev.h === height ? prev : { w: width, h: height },
-              );
-            }
-          }}
-        />
-        {box ? (
-          <View
-            className="absolute inset-0"
-            onStartShouldSetResponder={() => true}
-            onResponderGrant={onGrant}
-            onResponderMove={onMove}
-            onResponderRelease={onRelease}
-            onResponderTerminate={() => {
-              dragIndex.current = null;
-            }}>
-            <SlopeOverlay
-              width={box.w}
-              height={box.h}
-              points={layoutPoints}
-              segmentLabels={segmentLabels}
+      <GestureDetector gesture={zoomGesture}>
+        <View className="flex-1 overflow-hidden rounded-2xl bg-neutral-950" onLayout={onBoxLayout}>
+          <Animated.View style={[{ flex: 1 }, zoomStyle]}>
+            <Image
+              source={{ uri }}
+              style={{ flex: 1 }}
+              contentFit="contain"
+              onLoad={(e) => {
+                // Solo como respaldo si no llegaron dimensiones: las fotos ya
+                // vienen normalizadas (EXIF aplicado) desde cámara/galería.
+                if (imgSize) return;
+                const { width, height } = e.source;
+                if (width > 0 && height > 0) setImgSize({ w: width, h: height });
+              }}
             />
-          </View>
-        ) : null}
-      </View>
+            {box ? (
+              <View
+                className="absolute inset-0"
+                onStartShouldSetResponder={() => true}
+                onResponderGrant={onGrant}
+                onResponderMove={onMove}
+                onResponderRelease={onRelease}
+                onResponderTerminate={() => {
+                  dragIndex.current = null;
+                }}>
+                <SlopeOverlay
+                  width={box.w}
+                  height={box.h}
+                  points={layoutPoints}
+                  segmentLabels={segmentLabels}
+                />
+              </View>
+            ) : null}
+          </Animated.View>
+
+          {isZoomed ? (
+            <Pressable
+              onPress={resetZoom}
+              hitSlop={8}
+              className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1.5">
+              <Text className="text-xs font-semibold text-white">1×</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </GestureDetector>
 
       <View className="py-3">
         <Text className="text-center text-sm text-neutral-500">{hint}</Text>

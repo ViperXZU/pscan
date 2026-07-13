@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LevelIndicator } from '@/components/level-indicator';
 import { PrimaryButton } from '@/components/primary-button';
+import { normalizePhoto } from '@/lib/normalizeImage';
 
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
@@ -43,12 +44,19 @@ export default function CameraScreen() {
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       if (photo?.uri) {
+        // Aplica la rotación EXIF de forma física y obtiene las dimensiones
+        // definitivas: evita que los puntos se corran al redibujar (ver
+        // normalizeImage.ts). Si falla, se usa la foto original.
+        let result = { uri: photo.uri, width: photo.width ?? 0, height: photo.height ?? 0 };
+        try {
+          result = await normalizePhoto(photo.uri);
+        } catch {}
         router.replace({
           pathname: '/measure',
           params: {
-            uri: photo.uri,
-            imgW: String(photo.width ?? 0),
-            imgH: String(photo.height ?? 0),
+            uri: result.uri,
+            imgW: String(result.width),
+            imgH: String(result.height),
           },
         });
       }
@@ -60,6 +68,14 @@ export default function CameraScreen() {
   return (
     <View className="flex-1 bg-black">
       <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back" />
+
+      {/* Cruz guía centrada (ejes de plano cartesiano) para apuntar derecho. */}
+      <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
+        <View className="absolute h-px w-full bg-white/60" />
+        <View className="absolute h-full w-px bg-white/60" />
+        <View className="h-2.5 w-2.5 rounded-full border-2 border-white/90" />
+      </View>
+
       <View
         className="absolute inset-0 justify-between"
         style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}

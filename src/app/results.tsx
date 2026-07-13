@@ -22,7 +22,7 @@ import {
   toMathFrame,
   type PolylineSegment,
 } from '@/lib/polyline';
-import { formatDegrees, formatGrade, formatRatio, formatSlopeM, interpretSlope } from '@/lib/slope';
+import { formatDegrees, formatRatio, formatSlopeM, interpretSlope } from '@/lib/slope';
 import type { Point } from '@/lib/types';
 
 /** Color según la severidad (0 plano → 6 vertical). */
@@ -52,14 +52,22 @@ const MAX_LISTED_SEGMENTS = 8;
 function ThumbnailWithPolyline({
   uri,
   points,
+  imgW,
+  imgH,
   highlightIndex,
 }: {
   uri: string;
   points: Point[];
+  imgW: number;
+  imgH: number;
   highlightIndex?: number | null;
 }) {
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
-  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
+  // Respaldo por si no llegaron dimensiones por parámetro (no debería pasar:
+  // las fotos vienen normalizadas con sus dims definitivas).
+  const [fallbackSize, setFallbackSize] = useState<{ w: number; h: number } | null>(null);
+  const imgSize =
+    imgW > 0 && imgH > 0 ? { w: imgW, h: imgH } : fallbackSize;
 
   const transform =
     box && imgSize
@@ -79,8 +87,9 @@ function ThumbnailWithPolyline({
         style={{ flex: 1 }}
         contentFit="contain"
         onLoad={(e) => {
+          if (imgW > 0 && imgH > 0) return;
           const { width, height } = e.source;
-          if (width > 0 && height > 0) setImgSize({ w: width, h: height });
+          if (width > 0 && height > 0) setFallbackSize({ w: width, h: height });
         }}
       />
       {box ? (
@@ -118,7 +127,12 @@ function HelpRow({ term, children }: { term: string; children: string }) {
 
 export default function ResultsScreen() {
   const insets = useSafeAreaInsets();
-  const { points: pointsParam, uri } = useLocalSearchParams<{ points?: string; uri?: string }>();
+  const {
+    points: pointsParam,
+    uri,
+    imgW,
+    imgH,
+  } = useLocalSearchParams<{ points?: string; uri?: string; imgW?: string; imgH?: string }>();
   const [helpOpen, setHelpOpen] = useState(false);
   const [plotW, setPlotW] = useState(0);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
@@ -201,6 +215,8 @@ export default function ResultsScreen() {
             <ThumbnailWithPolyline
               uri={uri}
               points={points}
+              imgW={Number(imgW) || 0}
+              imgH={Number(imgH) || 0}
               highlightIndex={isMulti ? selIdx : null}
             />
           </View>
@@ -329,7 +345,6 @@ export default function ResultsScreen() {
               </View>
               <View className="mt-1 flex-row flex-wrap">
                 <Stat label="Ángulo" value={formatDegrees(sel.slope)} />
-                <Stat label="Pendiente %" value={formatGrade(sel.slope)} />
                 <Stat label="Pendiente m" value={formatSlopeM(sel.slope)} />
                 <Stat label="Proporción" value={formatRatio(sel.slope)} />
               </View>
@@ -356,14 +371,9 @@ export default function ResultsScreen() {
               caption="Inclinación respecto al suelo (0° plano · 90° pared)"
             />
             <ResultCard
-              label="Pendiente (%)"
-              value={formatGrade(steepest.slope)}
-              caption="Cuánto subes por cada 100 que avanzas en horizontal"
-            />
-            <ResultCard
               label="Pendiente (m)"
               value={formatSlopeM(steepest.slope)}
-              caption="El número puro: subes m por cada 1 (m = tan θ = %/100). Es la m de y = m·x + b"
+              caption="Cuánto subes por cada 1 que avanzas en horizontal (m = tan θ). Es la m de y = m·x + b"
             />
             <ResultCard
               label="Proporción"
@@ -385,13 +395,10 @@ export default function ResultsScreen() {
             <HelpRow term="Grados (°)">
               La inclinación respecto al suelo. 0° es totalmente plano y 90° es una pared vertical.
             </HelpRow>
-            <HelpRow term="Pendiente (%)">
-              Cuánto subes por cada 100 que avanzas en horizontal. 100 % equivale a 45°. No tiene
-              tope: cuanto más vertical, más crece.
-            </HelpRow>
-            <HelpRow term="Pendiente (m) — el número">
-              Cuánto subes por cada 1 que avanzas (no por 100, como el %). Es m = tan(ángulo) = %/100
-              y es la misma m de la ecuación y = m·x + b. Ej.: 33 % → m = 0.33 (subes 1 por cada 3).
+            <HelpRow term="Pendiente (m)">
+              Cuánto subes por cada 1 que avanzas en horizontal. Es m = tan(ángulo) y la misma m de
+              la ecuación y = m·x + b. Ej.: m = 0.33 → subes 1 por cada 3 · m = 1 → 45° · sin tope
+              (cuanto más vertical, más crece).
             </HelpRow>
             <HelpRow term="Proporción (1 : N)">
               Por cada 1 que subes, avanzas N en horizontal. Una rampa accesible típica es 1 : 12.
