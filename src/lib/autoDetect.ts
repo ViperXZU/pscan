@@ -1,6 +1,7 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { snapPolylineToEdges } from './edgeSnap';
+import { sanitizeFunctionTrace } from './polyline';
 import { pickBestSegment, type Segment } from './segmentPick';
 import type { Point } from './types';
 
@@ -151,7 +152,10 @@ export async function traceEdgeAlongGuide(args: {
     const snapped = snapPolylineToEdges(bitmap, guideScaled);
     if (!snapped) return null;
 
-    return snapped.map((p) => ({ x: p.x * toOriginal, y: p.y * toOriginal }));
+    const original = snapped.map((p) => ({ x: p.x * toOriginal, y: p.y * toOriginal }));
+    // El snap puede producir vértices que retroceden unos px en x (ruido del
+    // borde) y romperían la condición de función: se reparan aquí mismo.
+    return sanitizeFunctionTrace(original, { collapseEqualX: true }).points;
   } finally {
     OpenCV.clearBuffers();
   }

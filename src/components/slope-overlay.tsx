@@ -11,11 +11,20 @@ type Props = {
   points: Point[];
   /** Etiqueta por tramo (p. ej. el ángulo). Longitud esperada: points.length - 1. */
   segmentLabels?: string[];
+  /** Índice de tramo a resaltar (0 = entre los puntos 0 y 1). */
+  highlightIndex?: number | null;
   color?: string;
 };
 
 /** Capa de dibujo pura: polilínea con vértices numerados y etiquetas por tramo. */
-export function SlopeOverlay({ width, height, points, segmentLabels, color = ACCENT }: Props) {
+export function SlopeOverlay({
+  width,
+  height,
+  points,
+  segmentLabels,
+  highlightIndex,
+  color = ACCENT,
+}: Props) {
   if (width <= 0 || height <= 0 || points.length === 0) return null;
 
   // Trazo denso (p. ej. ajustado a la curva): puntos pequeños y sin rótulos,
@@ -30,6 +39,19 @@ export function SlopeOverlay({ width, height, points, segmentLabels, color = ACC
     <Svg width={width} height={height} pointerEvents="none">
       {points.length > 1 ? (
         <Path d={pathD} stroke={color} strokeWidth={3} fill="none" strokeLinejoin="round" />
+      ) : null}
+
+      {/* Tramo seleccionado: resaltado ámbar por encima de la polilínea. */}
+      {highlightIndex != null && highlightIndex >= 0 && highlightIndex + 1 < points.length ? (
+        <Line
+          x1={points[highlightIndex].x}
+          y1={points[highlightIndex].y}
+          x2={points[highlightIndex + 1].x}
+          y2={points[highlightIndex + 1].y}
+          stroke="#f59e0b"
+          strokeWidth={5}
+          strokeLinecap="round"
+        />
       ) : null}
 
       {segmentLabels && !dense

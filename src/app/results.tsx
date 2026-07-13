@@ -17,6 +17,8 @@ import {
   buildSegments,
   formatDomain,
   formatPiece,
+  sanitizeFunctionTrace,
+  segmentLine,
   toMathFrame,
   type PolylineSegment,
 } from '@/lib/polyline';
@@ -47,7 +49,15 @@ const CURVE_SAMPLES = 60;
 const MAX_LISTED_SEGMENTS = 8;
 
 /** Miniatura de la foto con la polilínea medida superpuesta. */
-function ThumbnailWithPolyline({ uri, points }: { uri: string; points: Point[] }) {
+function ThumbnailWithPolyline({
+  uri,
+  points,
+  highlightIndex,
+}: {
+  uri: string;
+  points: Point[];
+  highlightIndex?: number | null;
+}) {
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -75,9 +85,24 @@ function ThumbnailWithPolyline({ uri, points }: { uri: string; points: Point[] }
       />
       {box ? (
         <View className="absolute inset-0" pointerEvents="none">
-          <SlopeOverlay width={box.w} height={box.h} points={layoutPoints} />
+          <SlopeOverlay
+            width={box.w}
+            height={box.h}
+            points={layoutPoints}
+            highlightIndex={highlightIndex}
+          />
         </View>
       ) : null}
+    </View>
+  );
+}
+
+/** Mini-dato del detalle de tramo: etiqueta arriba, valor abajo. */
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <View className="w-1/2 py-1">
+      <Text className="text-[11px] uppercase tracking-wider text-neutral-400">{label}</Text>
+      <Text className="text-base font-semibold text-neutral-900">{value}</Text>
     </View>
   );
 }
@@ -96,29 +121,36 @@ export default function ResultsScreen() {
   const { points: pointsParam, uri } = useLocalSearchParams<{ points?: string; uri?: string }>();
   const [helpOpen, setHelpOpen] = useState(false);
   const [plotW, setPlotW] = useState(0);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
-  const points = useMemo<Point[]>(() => {
+  // Los puntos entrantes pasan por la reparación de trazos "casi función":
+  // vértices que retroceden unos px en x (ruido del ajuste automático) se
+  // eliminan; un trazo que se devuelve de verdad se deja intacto.
+  const { points, dropped } = useMemo(() => {
     try {
       const parsed = JSON.parse(pointsParam ?? '[]');
-      return Array.isArray(parsed) ? parsed : [];
+      const raw: Point[] = Array.isArray(parsed) ? parsed : [];
+      const sanitized = sanitizeFunctionTrace(raw);
+      return { points: sanitized.points, dropped: sanitized.dropped };
     } catch {
-      return [];
+      return { points: [] as Point[], dropped: 0 };
     }
   }, [pointsParam]);
 
   const segments = useMemo(() => buildSegments(points), [points]);
   const piecewise = useMemo(() => buildPiecewise(points), [points]);
+  const mathFrame = useMemo(() => toMathFrame(points), [points]);
 
   // Ajuste de curva (grado 1-3): la "función" no lineal del trazo.
   const fit = useMemo(() => {
     if (points.length < 3 || !piecewise.isFunction) return null;
-    return fitBestPolynomial(toMathFrame(points).pts);
-  }, [points, piecewise.isFunction]);
+    return fitBestPolynomial(mathFrame.pts);
+  }, [points.length, piecewise.isFunction, mathFrame]);
 
   // Curva muestreada de vuelta en px de imagen, para el plot.
   const curvePoints = useMemo<Point[] | null>(() => {
     if (!fit || fit.degree < 2) return null;
-    const { origin, pts } = toMathFrame(points);
+    const { origin, pts } = mathFrame;
     const xs = pts.map((p) => p.X);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
@@ -129,7 +161,7 @@ export default function ResultsScreen() {
       out.push({ x: origin.x + X, y: origin.y - Y });
     }
     return out;
-  }, [fit, points]);
+  }, [fit, mathFrame]);
 
   if (segments.length === 0) {
     return (
@@ -149,6 +181,14 @@ export default function ResultsScreen() {
   const interpretation = interpretSlope(steepest.slope);
   const tone = LEVEL_STYLES[interpretation.level];
 
+  // Tramo seleccionado (por defecto, el más empinado), acotado por si cambia el trazo.
+  const steepestIdx = segments.indexOf(steepest);
+  const selIdx = Math.min(selectedIdx ?? steepestIdx, segments.length - 1);
+  const sel = segments[selIdx];
+  const selLine = segmentLine(sel.a, sel.b, mathFrame.origin);
+  const selInfo = interpretSlope(sel.slope);
+  const selTone = LEVEL_STYLES[selInfo.level];
+
   return (
     <View
       className="flex-1 bg-white"
@@ -156,7 +196,23 @@ export default function ResultsScreen() {
       <ScrollView className="flex-1 px-6 pt-4" contentContainerClassName="pb-4">
         <Text className="text-2xl font-bold text-neutral-900">Resultados</Text>
 
-        {uri ? <View className="mt-4"><ThumbnailWithPolyline uri={uri} points={points} /></View> : null}
+        {uri ? (
+          <View className="mt-4">
+            <ThumbnailWithPolyline
+              uri={uri}
+              points={points}
+              highlightIndex={isMulti ? selIdx : null}
+            />
+          </View>
+        ) : null}
+
+        {dropped > 0 ? (
+          <Text className="mt-2 text-xs text-neutral-400">
+            {dropped === 1
+              ? 'Se omitió 1 punto que retrocedía en x para mantener la función.'
+              : `Se omitieron ${dropped} puntos que retrocedían en x para mantener la función.`}
+          </Text>
+        ) : null}
 
         {/* Interpretación (del tramo más empinado). */}
         <View className={`mt-4 flex-row items-center gap-3 rounded-2xl p-4 ${tone.bg}`}>
@@ -230,44 +286,66 @@ export default function ResultsScreen() {
               </View>
             )}
 
-            {/* Pendiente por tramo (o resumen si el trazo es denso). */}
-            {!dense ? (
-              <>
-                <Text className="mt-6 text-lg font-bold text-neutral-900">Pendiente por tramo</Text>
-                <View className="mt-2 gap-2">
-                  {segments.map((s) => {
-                    const dot = LEVEL_STYLES[interpretSlope(s.slope).level].dot;
-                    return (
-                      <View
-                        key={s.index}
-                        className="flex-row items-center gap-3 rounded-xl border border-neutral-100 px-4 py-3">
-                        <View className={`h-2.5 w-2.5 rounded-full ${dot}`} />
-                        <Text className="w-16 text-sm font-semibold text-neutral-700">
-                          Tramo {s.index + 1}
-                        </Text>
-                        <Text className="flex-1 text-sm text-neutral-900">
-                          {DIR_ARROW[s.direction]} {formatDegrees(s.slope)}
-                        </Text>
-                        <Text className="w-16 text-right text-sm text-neutral-500">
-                          {formatGrade(s.slope)}
-                        </Text>
-                        <Text className="w-20 text-right text-sm text-neutral-500">
-                          m {formatSlopeM(s.slope)}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </>
-            ) : (
-              <View className="mt-3 rounded-xl border border-neutral-100 px-4 py-3">
-                <Text className="text-sm text-neutral-700">
-                  Trazo denso ({segments.length} tramos, ajustado a la curva): usa la curva de
-                  arriba como resumen. Ángulo máximo {formatDegrees(steepest.slope)} (
-                  {formatGrade(steepest.slope)}).
+            {/* Pendiente por tramo: chips deslizables + detalle del seleccionado. */}
+            <Text className="mt-6 text-lg font-bold text-neutral-900">
+              Pendiente por tramo{segments.length > 2 ? ` (${segments.length})` : ''}
+            </Text>
+            <Text className="mt-0.5 text-xs text-neutral-400">
+              Toca un tramo para ver su detalle; se resalta en la foto de arriba.
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mt-2"
+              contentContainerClassName="gap-2 pr-2">
+              {segments.map((s, i) => {
+                const active = i === selIdx;
+                const dot = LEVEL_STYLES[interpretSlope(s.slope).level].dot;
+                return (
+                  <Pressable
+                    key={s.index}
+                    onPress={() => setSelectedIdx(i)}
+                    className={`flex-row items-center gap-1.5 rounded-full border px-3 py-1.5 ${
+                      active ? 'border-blue-600 bg-blue-600' : 'border-neutral-200 bg-white'
+                    }`}>
+                    <View className={`h-2 w-2 rounded-full ${dot}`} />
+                    <Text
+                      className={`text-xs font-semibold ${active ? 'text-white' : 'text-neutral-700'}`}>
+                      {i + 1} · {formatDegrees(s.slope)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Detalle del tramo seleccionado. */}
+            <View className="mt-2 rounded-2xl border border-neutral-100 p-4">
+              <View className="flex-row items-center gap-2">
+                <View className={`h-2.5 w-2.5 rounded-full ${selTone.dot}`} />
+                <Text className="text-sm font-bold text-neutral-900">
+                  Tramo {selIdx + 1} de {segments.length} {DIR_ARROW[sel.direction]}
                 </Text>
+                <Text className={`text-xs font-semibold ${selTone.text}`}>{selInfo.title}</Text>
               </View>
-            )}
+              <View className="mt-1 flex-row flex-wrap">
+                <Stat label="Ángulo" value={formatDegrees(sel.slope)} />
+                <Stat label="Pendiente %" value={formatGrade(sel.slope)} />
+                <Stat label="Pendiente m" value={formatSlopeM(sel.slope)} />
+                <Stat label="Proporción" value={formatRatio(sel.slope)} />
+              </View>
+              {selLine.vertical ? (
+                <Text className="mt-1 font-mono text-sm text-neutral-800">
+                  x = {Math.round(selLine.x)} (vertical)
+                </Text>
+              ) : (
+                <>
+                  <Text className="mt-1 font-mono text-sm text-neutral-800">
+                    {formatPiece(selLine)}
+                  </Text>
+                  <Text className="font-mono text-xs text-neutral-400">{formatDomain(selLine)}</Text>
+                </>
+              )}
+            </View>
           </>
         ) : (
           // Un solo tramo: las cifras grandes de siempre.

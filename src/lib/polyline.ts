@@ -140,6 +140,78 @@ export function buildPiecewise(points: Point[]): PiecewiseModel {
   return { isFunction: true, origin, pieces };
 }
 
+export interface SanitizedTrace {
+  points: Point[];
+  /** true si se eliminó algún vértice. */
+  repaired: boolean;
+  /** Cuántos vértices se eliminaron. */
+  dropped: number;
+}
+
+/**
+ * Repara trazos "casi función": el ajuste automático al borde (y a veces el
+ * dedo) produce vértices que RETROCEDEN unos píxeles en x, y con eso el trazo
+ * deja de ser una función. Si el retroceso total es pequeño comparado con el
+ * avance (≤20 %: ruido, no intención), esos vértices se eliminan conservando
+ * la forma y la orientación de dibujo. Un trazo que se devuelve de verdad
+ * (una "S" tumbada) se respeta y se devuelve intacto.
+ *
+ * `collapseEqualX` además funde vértices con x idéntica (micro-verticales del
+ * snap). Se deja desactivado para trazos manuales, donde un tramo vertical es
+ * una decisión visible del usuario.
+ */
+export function sanitizeFunctionTrace(
+  points: Point[],
+  options?: { collapseEqualX?: boolean },
+): SanitizedTrace {
+  const unchanged: SanitizedTrace = { points, repaired: false, dropped: 0 };
+  if (points.length < 3) return unchanged;
+
+  let forward = 0;
+  let backward = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    if (dx > 0) forward += dx;
+    else backward -= dx;
+  }
+  const rightward = forward >= backward;
+  const advance = rightward ? forward : backward;
+  const regress = rightward ? backward : forward;
+  if (advance <= 0) return unchanged;
+  // Retroceso grande = intención del usuario, no ruido: no tocar.
+  if (regress > 0.2 * advance) return unchanged;
+
+  const ordered = rightward ? points : [...points].reverse();
+  const kept: Point[] = [ordered[0]];
+  for (let i = 1; i < ordered.length; i++) {
+    const lastX = kept[kept.length - 1].x;
+    const x = ordered[i].x;
+    if (x > lastX || (!options?.collapseEqualX && x === lastX)) kept.push(ordered[i]);
+  }
+
+  const dropped = points.length - kept.length;
+  if (dropped === 0 || kept.length < 2) return unchanged;
+  return { points: rightward ? kept : kept.reverse(), repaired: true, dropped };
+}
+
+/**
+ * Ecuación y = m·x + b de UN tramo individual (a→b) en el marco matemático
+ * compartido (ver toMathFrame). Para tramos verticales devuelve la recta
+ * x = c, que no es función pero sí describe el tramo.
+ */
+export function segmentLine(
+  a: Point,
+  b: Point,
+  origin: Point,
+): { vertical: true; x: number } | ({ vertical: false } & PiecewisePiece) {
+  const A = { X: a.x - origin.x, Y: origin.y - a.y };
+  const B = { X: b.x - origin.x, Y: origin.y - b.y };
+  const [p0, p1] = A.X <= B.X ? [A, B] : [B, A];
+  if (Math.abs(p1.X - p0.X) < VERTICAL_DX_EPS) return { vertical: true, x: p0.X };
+  const m = (p1.Y - p0.Y) / (p1.X - p0.X);
+  return { vertical: false, m, b: p0.Y - m * p0.X, x0: p0.X, x1: p1.X };
+}
+
 /** Ej.: "y = 1.00·x + 25". */
 export function formatPiece(p: PiecewisePiece): string {
   const b = Math.round(p.b);
